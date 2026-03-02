@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: discovery-server-config
+  namespace: shoeapp
+data:
+  # Non-sensitive config values
+  # Services read these via environment variables in the deployment
+  SERVER_PORT: "8761"
+  SPRING_APPLICATION_NAME: "discovery-server"

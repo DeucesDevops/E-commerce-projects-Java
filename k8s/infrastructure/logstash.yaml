@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────
+# Logstash — collects logs from all containers and sends to Elasticsearch
+#
+# Pipeline:
+#   Input: Logstash listens on port 5044 (Beats protocol)
+#          — but we use the simpler "tcp" input so services can send directly
+#   Filter: parse the JSON log lines (already formatted by logback-spring.xml)
+#   Output: forward to Elasticsearch
+# ─────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-config
+  namespace: shoeapp
+data:
+  logstash.conf: |
+    input {
+      # Listen for log lines sent over TCP (port 5000)
+      # In production you'd use Filebeat (a lightweight log shipper)
+      # to tail container log files and forward them here.
+      tcp {
+        port => 5000
+        codec => json_lines   # each line is a JSON object (from logback-spring.xml)
+      }
+    }
+
+    filter {
+      # The JSON is already structured — just parse the timestamp
+      date {
+        match => ["@timestamp", "ISO8601"]
+      }
+    }
+
+    output {
+      elasticsearch {
+        hosts => ["http://elasticsearch:9200"]
+        # Create a separate index per service per day: "logs-auth-service-2024.01.15"
+        # This makes it easy to search logs for a specific service
+        index => "logs-%{[service]}-%{+YYYY.MM.dd}"
+      }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: shoeapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:8.11.0
+          ports:
+            - containerPort: 5000   # TCP input
+            - containerPort: 9600   # Logstash monitoring API
+          volumeMounts:
+            - name: config
+              mountPath: /usr/share/logstash/pipeline
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "512Mi"
+            limits:
+              cpu: "600m"
+              memory: "1Gi"
+      volumes:
+        - name: config
+          configMap:
+            name: logstash-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: shoeapp
+spec:
+  selector:
+    app: logstash
+  ports:
+    - name: tcp-input
+      port: 5000
+      targetPort: 5000
+    - name: monitoring
+      port: 9600
+      targetPort: 9600

@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────
+# Prometheus — collects metrics from all services
+#
+# How it works:
+#   - Every service exposes /actuator/prometheus (from micrometer-registry-prometheus)
+#   - Prometheus scrapes that endpoint every 15 seconds
+#   - Grafana queries Prometheus to draw dashboards
+# ─────────────────────────────────────────────────────────
+
+# ConfigMap: Prometheus configuration
+# scrape_configs tells Prometheus WHICH endpoints to scrape and HOW OFTEN
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: shoeapp
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s      # how often to scrape each target
+      evaluation_interval: 15s  # how often to evaluate alerting rules
+
+    scrape_configs:
+      # Scrape Prometheus itself (for meta-monitoring)
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Scrape all Spring Boot services
+      # Each entry is: service-name:port
+      - job_name: 'spring-boot-services'
+        metrics_path: '/actuator/prometheus'
+        static_configs:
+          - targets:
+            - 'discovery-server:8761'
+            - 'api-gateway:8080'
+            - 'auth-service:8084'
+            - 'product-service:8081'
+            - 'inventory-service:8083'
+            - 'order-service:8082'
+            - 'cart-service:8085'
+            - 'user-service:8088'
+            - 'notification-service:8087'
+            - 'payment-service:8086'
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: shoeapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.48.0
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.retention.time=15d"   # keep 15 days of metrics
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}   # In production, use a PersistentVolumeClaim
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: shoeapp
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+  type: ClusterIP

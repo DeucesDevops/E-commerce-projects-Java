@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: inventory-service-config
+  namespace: shoeapp
+data:
+  SERVER_PORT: "8083"
+  SPRING_APPLICATION_NAME: "inventory-service"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres-inventory:5432/inventory_db"
+  SPRING_DATASOURCE_USERNAME: "inventory_user"
+  EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: "http://discovery-server:8761/eureka/"
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"

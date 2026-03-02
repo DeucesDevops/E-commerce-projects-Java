@@ -2,21 +2,21 @@ spring:
   application:
     name: auth-service
   datasource:
-    url: jdbc:h2:mem:authdb
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    # ${VAR:default} means: read env var VAR, or use "default" if it's not set.
+    # When running locally: uses the fallback (localhost).
+    # When running in Docker: docker-compose injects the real value.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/auth_db}
+    username: ${SPRING_DATASOURCE_USERNAME:auth_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:auth_pass}
+    driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: create-drop
-    show-sql: true
+      # "update" = create tables if missing, add columns if missing, never drop data
+      ddl-auto: update
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
+        dialect: org.hibernate.dialect.PostgreSQLDialect
 
 server:
   port: 8084
@@ -24,4 +24,27 @@ server:
 eureka:
   client:
     service-url:
-      defaultZone: http://localhost:8761/eureka
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka/}
+
+# JWT secret must come from environment variable — never hardcode in source code
+jwt:
+  secret: ${JWT_SECRET:a-local-dev-secret-key-change-in-production-minimum-32-chars}
+  expiration-ms: 900000       # 15 minutes (access token)
+  refresh-expiration-ms: 604800000  # 7 days (refresh token)
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+
+otel:
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://jaeger:4317}

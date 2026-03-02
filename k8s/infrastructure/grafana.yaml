@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────────────────
+# Grafana — visualizes metrics from Prometheus
+#
+# After deploying, access Grafana at http://localhost:3000
+# Default login: admin / admin (change immediately!)
+#
+# To add a dashboard:
+#   1. Left sidebar → Dashboards → Import
+#   2. Enter ID 4701 (JVM Micrometer dashboard) → Load
+#   3. Select your Prometheus data source → Import
+# ─────────────────────────────────────────────────────────
+
+# ConfigMap: tells Grafana where Prometheus is
+# This is auto-provisioned — no manual setup needed
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: shoeapp
+data:
+  prometheus-datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus:9090   # uses the K8s service name
+        access: proxy
+        isDefault: true
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: shoeapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.2.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "admin"   # Change this in production!
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "300m"
+              memory: "512Mi"
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: shoeapp
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: ClusterIP

@@ -1,0 +1,7 @@
+# A Namespace is like a folder inside Kubernetes.
+# It isolates your app's resources from other things on the cluster.
+# All our pods, services, secrets, etc. live in the "shoeapp" namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shoeapp

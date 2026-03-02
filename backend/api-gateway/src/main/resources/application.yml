@@ -7,25 +7,41 @@ spring:
   cloud:
     gateway:
       routes:
+        # Auth service — NO JWT required (users need to login/register first)
+        - id: auth-service
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/auth/**
+
         - id: product-service
           uri: lb://product-service
           predicates:
             - Path=/api/products/**
-
-        - id: order-service
-          uri: lb://order-service
-          predicates:
-            - Path=/api/orders/**
 
         - id: inventory-service
           uri: lb://inventory-service
           predicates:
             - Path=/api/inventory/**
 
-        - id: auth-service
-          uri: lb://auth-service
+        - id: order-service
+          uri: lb://order-service
           predicates:
-            - Path=/api/auth/**
+            - Path=/api/orders/**
+
+        - id: cart-service
+          uri: lb://cart-service
+          predicates:
+            - Path=/api/cart/**
+
+        - id: payment-service
+          uri: lb://payment-service
+          predicates:
+            - Path=/api/payments/**
+
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/users/**
 
       globalcors:
         cors-configurations:
@@ -38,9 +54,30 @@ spring:
               - DELETE
               - OPTIONS
             allowed-headers: "*"
-            allow-credentials: true
+            allow-credentials: false
 
 eureka:
   client:
     service-url:
-      defaultZone: http://localhost:8761/eureka
+      defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka/}
+
+# Must match the JWT_SECRET in auth-service exactly
+jwt:
+  secret: ${JWT_SECRET:a-local-dev-secret-key-change-in-production-minimum-32-chars}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+
+otel:
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://jaeger:4317}

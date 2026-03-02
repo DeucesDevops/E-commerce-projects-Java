@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-user
+  namespace: shoeapp
+spec:
+  serviceName: postgres-user
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-user
+  template:
+    metadata:
+      labels:
+        app: postgres-user
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: user_db
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: user-db-secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-db-secret
+                  key: password
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "user_user", "-d", "user_db"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-user
+  namespace: shoeapp
+spec:
+  selector:
+    app: postgres-user
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: user-db-secret
+  namespace: shoeapp
+type: Opaque
+stringData:
+  username: user_user
+  password: user_pass_secure_change_me

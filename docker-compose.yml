@@ -1,0 +1,433 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────
+#  NETWORKS
+#  All containers share this network so they
+#  can reach each other by service name.
+# ─────────────────────────────────────────────
+networks:
+  shoeapp-network:
+    driver: bridge
+
+# ─────────────────────────────────────────────
+#  VOLUMES
+#  Named volumes keep database data alive even
+#  after containers are stopped or removed.
+# ─────────────────────────────────────────────
+volumes:
+  auth-db-data:
+  product-db-data:
+  order-db-data:
+  inventory-db-data:
+  user-db-data:
+  payment-db-data:
+  redis-data:
+
+# ─────────────────────────────────────────────
+#  SERVICES
+# ─────────────────────────────────────────────
+services:
+
+  # ─── DATABASES ───────────────────────────
+
+  postgres-auth:
+    image: postgres:15-alpine
+    container_name: postgres-auth
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-product:
+    image: postgres:15-alpine
+    container_name: postgres-product
+    environment:
+      POSTGRES_DB: product_db
+      POSTGRES_USER: product_user
+      POSTGRES_PASSWORD: product_pass
+    volumes:
+      - product-db-data:/var/lib/postgresql/data
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U product_user -d product_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-order:
+    image: postgres:15-alpine
+    container_name: postgres-order
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: order_user
+      POSTGRES_PASSWORD: order_pass
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_user -d order_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-inventory:
+    image: postgres:15-alpine
+    container_name: postgres-inventory
+    environment:
+      POSTGRES_DB: inventory_db
+      POSTGRES_USER: inventory_user
+      POSTGRES_PASSWORD: inventory_pass
+    volumes:
+      - inventory-db-data:/var/lib/postgresql/data
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory_user -d inventory_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-user:
+    image: postgres:15-alpine
+    container_name: postgres-user
+    environment:
+      POSTGRES_DB: user_db
+      POSTGRES_USER: user_user
+      POSTGRES_PASSWORD: user_pass
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user_user -d user_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-payment:
+    image: postgres:15-alpine
+    container_name: postgres-payment
+    environment:
+      POSTGRES_DB: payment_db
+      POSTGRES_USER: payment_user
+      POSTGRES_PASSWORD: payment_pass
+    volumes:
+      - payment-db-data:/var/lib/postgresql/data
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_user -d payment_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── REDIS ───────────────────────────────
+  # Used by cart-service (session storage) and
+  # api-gateway (rate limiting)
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    volumes:
+      - redis-data:/data
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── KAFKA + ZOOKEEPER ───────────────────
+  # Zookeeper manages Kafka's cluster metadata.
+  # Kafka is the message broker for async events.
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - shoeapp-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # PLAINTEXT_HOST allows apps inside Docker to connect on port 9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ─── DISCOVERY SERVER ────────────────────
+  # All backend services register here.
+  # Must start before any other backend service.
+
+  discovery-server:
+    build:
+      context: ./backend/discovery-server
+      dockerfile: Dockerfile
+    container_name: discovery-server
+    ports:
+      - "8761:8761"   # Expose so you can view Eureka dashboard at http://localhost:8761
+    networks:
+      - shoeapp-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8761/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ─── AUTH SERVICE ────────────────────────
+
+  auth-service:
+    build:
+      context: ./backend/auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: auth_user
+      SPRING_DATASOURCE_PASSWORD: auth_pass
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      # JWT_SECRET must match exactly between auth-service and api-gateway
+      # In real production this would come from Kubernetes Secrets, not hardcoded here
+      JWT_SECRET: change-this-to-a-long-random-secret-in-production-minimum-32-chars
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── PRODUCT SERVICE ─────────────────────
+
+  product-service:
+    build:
+      context: ./backend/product-service
+      dockerfile: Dockerfile
+    container_name: product-service
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-product:5432/product_db
+      SPRING_DATASOURCE_USERNAME: product_user
+      SPRING_DATASOURCE_PASSWORD: product_pass
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    depends_on:
+      postgres-product:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── INVENTORY SERVICE ───────────────────
+
+  inventory-service:
+    build:
+      context: ./backend/inventory-service
+      dockerfile: Dockerfile
+    container_name: inventory-service
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-inventory:5432/inventory_db
+      SPRING_DATASOURCE_USERNAME: inventory_user
+      SPRING_DATASOURCE_PASSWORD: inventory_pass
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      postgres-inventory:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── ORDER SERVICE ───────────────────────
+
+  order-service:
+    build:
+      context: ./backend/order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-order:5432/order_db
+      SPRING_DATASOURCE_USERNAME: order_user
+      SPRING_DATASOURCE_PASSWORD: order_pass
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      postgres-order:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── API GATEWAY ─────────────────────────
+  # Entry point for all requests from the frontend.
+  # Must start after all backend services are registered.
+
+  api-gateway:
+    build:
+      context: ./backend/api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      # Must be exactly the same secret as auth-service so gateway can validate tokens
+      JWT_SECRET: change-this-to-a-long-random-secret-in-production-minimum-32-chars
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── CART SERVICE ───────────────────────
+
+  cart-service:
+    build:
+      context: ./backend/cart-service
+      dockerfile: Dockerfile
+    container_name: cart-service
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    depends_on:
+      redis:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── USER SERVICE ────────────────────────
+
+  user-service:
+    build:
+      context: ./backend/user-service
+      dockerfile: Dockerfile
+    container_name: user-service
+    ports:
+      - "8088:8088"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-user:5432/user_db
+      SPRING_DATASOURCE_USERNAME: user_user
+      SPRING_DATASOURCE_PASSWORD: user_pass
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    depends_on:
+      postgres-user:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── NOTIFICATION SERVICE ────────────────
+
+  notification-service:
+    build:
+      context: ./backend/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    ports:
+      - "8087:8087"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      # Set these to your real email credentials (or use a test account)
+      MAIL_HOST: smtp.gmail.com
+      MAIL_PORT: 587
+      MAIL_USERNAME: ${MAIL_USERNAME:-your-email@gmail.com}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-your-app-password}
+      MAIL_FROM: noreply@shoeapp.com
+    depends_on:
+      kafka:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── PAYMENT SERVICE ─────────────────────
+
+  payment-service:
+    build:
+      context: ./backend/payment-service
+      dockerfile: Dockerfile
+    container_name: payment-service
+    ports:
+      - "8086:8086"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-payment:5432/payment_db
+      SPRING_DATASOURCE_USERNAME: payment_user
+      SPRING_DATASOURCE_PASSWORD: payment_pass
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      # Get your Stripe test key from https://dashboard.stripe.com/test/apikeys
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
+    depends_on:
+      postgres-payment:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    networks:
+      - shoeapp-network
+
+  # ─── FRONTEND ────────────────────────────
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - shoeapp-network

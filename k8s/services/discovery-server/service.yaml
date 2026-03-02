@@ -1,0 +1,17 @@
+# Service: gives discovery-server a stable DNS name inside the cluster.
+# Any pod can reach it at: http://discovery-server:8761
+#
+# type: ClusterIP (default) = only accessible inside the cluster.
+# We expose the Eureka dashboard externally via Ingress, not here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: discovery-server
+  namespace: shoeapp
+spec:
+  selector:
+    app: discovery-server
+  ports:
+    - port: 8761
+      targetPort: 8761
+  type: ClusterIP

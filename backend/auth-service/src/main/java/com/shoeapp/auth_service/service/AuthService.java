@@ -6,17 +6,17 @@ import com.shoeapp.auth_service.dto.RegisterRequest;
 import com.shoeapp.auth_service.model.User;
 import com.shoeapp.auth_service.repository.UserRepository;
 import com.shoeapp.auth_service.util.JwtUtil;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 
 @Service
 public class AuthService {
 
     private final UserRepository userRepository;
     private final JwtUtil jwtUtil;
+    // BCryptPasswordEncoder.encode() hashes safely (slow by design)
+    // BCryptPasswordEncoder.matches() checks plain text against stored hash
+    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     public AuthService(UserRepository userRepository, JwtUtil jwtUtil) {
         this.userRepository = userRepository;
@@ -31,7 +31,7 @@ public class AuthService {
         User user = new User();
         user.setName(request.getName());
         user.setEmail(request.getEmail());
-        user.setPassword(hashPassword(request.getPassword()));
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
 
         User savedUser = userRepository.save(user);
 
@@ -44,30 +44,13 @@ public class AuthService {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException("Invalid email or password"));
 
-        if (!user.getPassword().equals(hashPassword(request.getPassword()))) {
+        // matches() compares plain password to the stored BCrypt hash safely
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new RuntimeException("Invalid email or password");
         }
 
         String token = jwtUtil.generateToken(user.getId(), user.getEmail(), user.getRole());
 
         return new AuthResponse(token, user.getId(), user.getName(), user.getEmail(), user.getRole());
-    }
-
-    private String hashPassword(String password) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(password.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) {
-                    hexString.append('0');
-                }
-                hexString.append(hex);
-            }
-            return hexString.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("Error hashing password", e);
-        }
     }
 }

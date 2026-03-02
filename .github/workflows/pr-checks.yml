@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────
+# PR Checks — runs on every Pull Request
+#
+# Lighter than the full CI/CD pipeline:
+#   ✅ Tests — must pass before merging
+#   ✅ Build verification — ensures the JAR compiles
+#   ❌ No Docker push
+#   ❌ No deployment
+#
+# This gives fast feedback on PRs without wasting deploy resources.
+# ─────────────────────────────────────────────────────────────────────
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-build:
+    name: Test & Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - discovery-server
+          - api-gateway
+          - auth-service
+          - product-service
+          - inventory-service
+          - order-service
+          - cart-service
+          - user-service
+          - notification-service
+          - payment-service
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Test ${{ matrix.service }}
+        run: mvn test --no-transfer-progress
+        working-directory: backend/${{ matrix.service }}
+
+      - name: Build JAR ${{ matrix.service }}
+        run: mvn package -DskipTests --no-transfer-progress
+        working-directory: backend/${{ matrix.service }}
+
+  frontend-check:
+    name: Frontend Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend

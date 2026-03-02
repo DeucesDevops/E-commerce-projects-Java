@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────
+# Jaeger — distributed tracing
+#
+# "All-in-one" image includes: collector, query, UI in one container.
+# Good for development. Production would split these into separate services
+# with a persistent backend (Cassandra or Elasticsearch).
+#
+# After deploying, access Jaeger UI at http://localhost:16686
+#
+# How to read a trace in Jaeger:
+#   1. Select a service in the dropdown (e.g. "api-gateway")
+#   2. Click "Find Traces"
+#   3. Click a trace to see the full span tree across services
+#   4. Each bar = one service handling that request
+#   5. Hover to see exact duration, HTTP status, error info
+#
+# Ports:
+#   16686 — Jaeger UI (browser)
+#   4317  — OTLP gRPC (services send traces here)
+#   4318  — OTLP HTTP (alternative)
+# ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: shoeapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:1.52
+          ports:
+            - containerPort: 16686   # Jaeger UI
+            - containerPort: 4317    # OTLP gRPC — Spring Boot sends traces here
+            - containerPort: 4318    # OTLP HTTP
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"   # enable OTLP receiver (for OpenTelemetry)
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: shoeapp
+spec:
+  selector:
+    app: jaeger
+  ports:
+    - name: ui
+      port: 16686
+      targetPort: 16686
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+  type: ClusterIP

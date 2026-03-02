@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────
+# Kibana — UI for searching and visualizing logs in Elasticsearch
+#
+# After deploying, access Kibana at http://localhost:5601
+#
+# First time setup:
+#   1. Go to Stack Management → Index Patterns
+#   2. Create pattern: logs-*
+#   3. Set @timestamp as the time field
+#   4. Go to Discover → search your logs
+#
+# Useful Kibana searches:
+#   service: "auth-service" AND level: "ERROR"
+#   service: "order-service" AND message: "order created"
+# ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: shoeapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:8.11.0
+          ports:
+            - containerPort: 5601
+          env:
+            - name: ELASTICSEARCH_HOSTS
+              value: "http://elasticsearch:9200"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 5601
+            initialDelaySeconds: 60
+            periodSeconds: 15
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: shoeapp
+spec:
+  selector:
+    app: kibana
+  ports:
+    - port: 5601
+      targetPort: 5601
+  type: ClusterIP

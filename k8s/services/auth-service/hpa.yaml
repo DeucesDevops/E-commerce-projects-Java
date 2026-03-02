@@ -1,0 +1,28 @@
+# HorizontalPodAutoscaler — auto-scale auth-service based on CPU load.
+#
+# How it works:
+#   - Kubernetes checks CPU every 30 seconds
+#   - If avg CPU > 70% across all pods → add a pod (up to maxReplicas)
+#   - If avg CPU < 70% → remove a pod (down to minReplicas)
+#
+# Example: sale event causes login traffic to spike
+#   2 pods at 85% CPU → K8s adds a 3rd pod → load drops to ~57% per pod
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-service-hpa
+  namespace: shoeapp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

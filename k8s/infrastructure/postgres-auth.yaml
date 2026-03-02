@@ -1,0 +1,91 @@
+# ─────────────────────────────────────────────────────────
+# PostgreSQL for auth-service
+#
+# StatefulSet vs Deployment:
+#   - Deployment: pods are interchangeable, can be restarted on any node
+#   - StatefulSet: each pod has a stable name (postgres-auth-0) and its
+#     own persistent volume. Databases MUST use StatefulSet so data survives
+#     pod restarts and rescheduling to different nodes.
+# ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-auth
+  namespace: shoeapp
+spec:
+  serviceName: postgres-auth   # must match the Service name below
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-auth
+  template:
+    metadata:
+      labels:
+        app: postgres-auth
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: auth_db
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: auth-db-secret   # reads from the Secret defined below
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auth-db-secret
+                  key: password
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          # Readiness probe: K8s won't send traffic until postgres is accepting connections
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "auth_user", "-d", "auth_db"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+  # volumeClaimTemplates: K8s will automatically create a PersistentVolumeClaim
+  # for each pod. This is the "ask for a 5GB hard drive" instruction.
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]   # one pod reads/writes at a time
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+# Service: gives postgres-auth a stable DNS name inside the cluster
+# Any pod can connect using: jdbc:postgresql://postgres-auth:5432/auth_db
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-auth
+  namespace: shoeapp
+spec:
+  selector:
+    app: postgres-auth
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None   # "headless" service — needed for StatefulSets
+
+---
+# Secret: stores sensitive DB credentials as base64-encoded values
+# In real production, use external-secrets or Vault — never commit real secrets to Git
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-db-secret
+  namespace: shoeapp
+type: Opaque
+stringData:
+  username: auth_user       # K8s auto-converts these to base64
+  password: auth_pass_secure_change_me

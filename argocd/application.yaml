@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────────────
+# ArgoCD Application — tells ArgoCD what to watch and where to deploy
+#
+# SETUP STEPS (one time):
+#   1. Install ArgoCD in your cluster:
+#      kubectl create namespace argocd
+#      kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+#
+#   2. Get the initial admin password:
+#      kubectl -n argocd get secret argocd-initial-admin-secret \
+#        -o jsonpath="{.data.password}" | base64 -d
+#
+#   3. Access the UI (port-forward):
+#      kubectl port-forward svc/argocd-server -n argocd 8090:443
+#      Open: https://localhost:8090  (login: admin / password from step 2)
+#
+#   4. Apply this file:
+#      kubectl apply -f argocd/application.yaml
+#
+#   After this, ArgoCD will watch the k8s/ directory in your Git repo.
+#   Every time GitHub Actions updates an image tag and pushes to Git,
+#   ArgoCD will automatically sync the cluster.
+# ─────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shoeapp
+  namespace: argocd   # ArgoCD lives in its own namespace
+spec:
+  # The project this app belongs to (default = no restrictions)
+  project: default
+
+  # SOURCE: where ArgoCD watches for changes
+  source:
+    # Change this to your actual GitHub repo URL
+    repoURL: https://github.com/YOUR_USERNAME/E-commerce-projects-Java.git
+    targetRevision: main   # watch the main branch
+    path: k8s              # only watch the k8s/ directory
+
+  # DESTINATION: which cluster and namespace to deploy to
+  destination:
+    server: https://kubernetes.default.svc   # the cluster ArgoCD is running in
+    namespace: shoeapp
+
+  # SYNC POLICY: how ArgoCD handles changes
+  syncPolicy:
+    automated:
+      # prune: delete K8s resources that were removed from Git
+      prune: true
+      # selfHeal: if someone manually changes the cluster, ArgoCD reverts it
+      # This enforces that Git is ALWAYS the source of truth
+      selfHeal: true
+    syncOptions:
+      # Create the "shoeapp" namespace automatically if it doesn't exist
+      - CreateNamespace=true
+      # Apply server-side so large ConfigMaps (Prometheus config) don't fail
+      - ServerSideApply=true
+
+  # HEALTH CHECKS: ArgoCD waits for all Deployments to be fully rolled out
+  # before marking the sync as successful
+  ignoreDifferences:
+    # Ignore the replicas field — the HPA manages this at runtime
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
