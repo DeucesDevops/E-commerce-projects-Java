@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# Java / Maven
+/target/
+**/target/
+*.class
+
+# IntelliJ
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.*
+
+# Docker
+*.log
+docker-compose.override.yml
+
+# Kubernetes / local configs
+/k8s/infrastructure/shared-secrets.yaml
+
+# Ignore project plan
+Plan.md
+
+# Misc
+*.swp
+thumbs.db
