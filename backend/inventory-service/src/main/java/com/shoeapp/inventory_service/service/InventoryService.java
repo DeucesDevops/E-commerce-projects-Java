@@ -37,6 +37,18 @@ public class InventoryService {
         }
     }
 
+    public Inventory restoreStock(Long productId, String size, Integer amount) {
+        Optional<Inventory> existing = inventoryRepository.findFirstByProductIdAndSize(productId, size);
+        if (existing.isPresent()) {
+            Inventory inventory = existing.get();
+            inventory.setQuantity(inventory.getQuantity() + amount);
+            return inventoryRepository.save(inventory);
+        } else {
+            Inventory inventory = new Inventory(productId, size, amount);
+            return inventoryRepository.save(inventory);
+        }
+    }
+
     public Inventory reduceStock(Long productId, String size, Integer amount) {
         Inventory inventory = inventoryRepository.findFirstByProductIdAndSize(productId, size)
                 .orElseThrow(() -> new RuntimeException(
