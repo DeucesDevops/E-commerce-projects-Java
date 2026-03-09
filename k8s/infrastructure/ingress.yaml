@@ -1,16 +1,15 @@
 # ─────────────────────────────────────────────────────────
 # Ingress — routes external traffic into the cluster
 #
-# Requires the Nginx Ingress Controller installed:
-#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+# Prerequisites:
+#   1. Nginx Ingress Controller:
+#      kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
 #
-# In production, replace "shoeapp.local" with your real domain.
-# For local testing, add these to /etc/hosts:
-#   127.0.0.1  shoeapp.local
-#   127.0.0.1  grafana.shoeapp.local
-#   127.0.0.1  kibana.shoeapp.local
-#   127.0.0.1  jaeger.shoeapp.local
-#   127.0.0.1  eureka.shoeapp.local
+#   2. cert-manager (for automatic TLS via Let's Encrypt):
+#      kubectl apply -f k8s/infrastructure/cert-manager.yaml
+#
+# Replace "shoeapp.example.com" with your real domain before deploying.
+# For local testing without TLS, remove the tls: section and cert-manager annotations.
 # ─────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -18,15 +17,38 @@ metadata:
   name: shoeapp-ingress
   namespace: shoeapp
   annotations:
-    # Enable sticky sessions for Eureka (services always talk to the same instance)
+    # Automatic TLS certificate from Let's Encrypt via cert-manager
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Force HTTP → HTTPS redirect
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Sticky sessions for Eureka (services always talk to the same instance)
     nginx.ingress.kubernetes.io/affinity: "cookie"
     # Increase timeout for slow startup responses
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    # Increase body size for product image uploads
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - shoeapp.example.com
+      secretName: shoeapp-tls
+    - hosts:
+        - grafana.shoeapp.example.com
+      secretName: grafana-tls
+    - hosts:
+        - kibana.shoeapp.example.com
+      secretName: kibana-tls
+    - hosts:
+        - jaeger.shoeapp.example.com
+      secretName: jaeger-tls
+    - hosts:
+        - eureka.shoeapp.example.com
+      secretName: eureka-tls
   rules:
     # Main app — frontend + API
-    - host: shoeapp.local
+    - host: shoeapp.example.com
       http:
         paths:
           - path: /api
@@ -44,8 +66,8 @@ spec:
                 port:
                   number: 80
 
-    # Grafana dashboard — http://grafana.shoeapp.local
-    - host: grafana.shoeapp.local
+    # Grafana dashboard — https://grafana.shoeapp.example.com
+    - host: grafana.shoeapp.example.com
       http:
         paths:
           - path: /
@@ -56,8 +78,8 @@ spec:
                 port:
                   number: 3000
 
-    # Kibana log search — http://kibana.shoeapp.local
-    - host: kibana.shoeapp.local
+    # Kibana log search — https://kibana.shoeapp.example.com
+    - host: kibana.shoeapp.example.com
       http:
         paths:
           - path: /
@@ -68,8 +90,8 @@ spec:
                 port:
                   number: 5601
 
-    # Jaeger tracing — http://jaeger.shoeapp.local
-    - host: jaeger.shoeapp.local
+    # Jaeger tracing — https://jaeger.shoeapp.example.com
+    - host: jaeger.shoeapp.example.com
       http:
         paths:
           - path: /
@@ -80,8 +102,8 @@ spec:
                 port:
                   number: 16686
 
-    # Eureka dashboard — http://eureka.shoeapp.local
-    - host: eureka.shoeapp.local
+    # Eureka dashboard — https://eureka.shoeapp.example.com
+    - host: eureka.shoeapp.example.com
       http:
         paths:
           - path: /

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-nginx-config
+  namespace: shoeapp
+data:
+  default.conf: |
+    server {
+      listen 80;
+      server_name _;
+      root /usr/share/nginx/html;
+      index index.html;
+
+      # SPA routing — unknown paths fall back to index.html so React Router works
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+
+      # Long-lived cache for hashed static assets (Vite outputs content-hashed filenames)
+      location ~* \.(js|css|woff2?|ttf|eot|svg|png|jpg|jpeg|gif|ico|webp)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+      }
+
+      # Disable caching for the HTML entry point so new deploys take effect immediately
+      location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+      }
+
+      # Kubernetes health probes hit /healthz on the frontend pod directly
+      location /healthz {
+        access_log off;
+        return 200 "ok";
+        add_header Content-Type text/plain;
+      }
+
+      # Gzip for text assets
+      gzip on;
+      gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+      gzip_min_length 1024;
+    }

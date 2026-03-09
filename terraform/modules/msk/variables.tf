@@ -1,0 +1,8 @@
+variable "project_name"       { type = string }
+variable "environment"         { type = string }
+variable "vpc_id"              { type = string }
+variable "private_subnet_ids"  { type = list(string) }
+variable "eks_sg_id"           { type = string }
+variable "instance_type"       { type = string }
+variable "kafka_version"       { type = string }
+variable "broker_count"        { type = number }

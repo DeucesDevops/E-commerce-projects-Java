@@ -10,6 +10,19 @@
 # ConfigMap: Prometheus configuration
 # scrape_configs tells Prometheus WHICH endpoints to scrape and HOW OFTEN
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data-pvc
+  namespace: shoeapp
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
@@ -84,7 +97,8 @@ spec:
           configMap:
             name: prometheus-config
         - name: data
-          emptyDir: {}   # In production, use a PersistentVolumeClaim
+          persistentVolumeClaim:
+            claimName: prometheus-data-pvc
 
 ---
 apiVersion: v1

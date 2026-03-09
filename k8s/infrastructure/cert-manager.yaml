@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────
+# cert-manager — automatic TLS certificates from Let's Encrypt
+#
+# Install cert-manager CRDs + controller FIRST (one-time cluster-level install):
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+#
+# Then apply this file:
+#   kubectl apply -f k8s/infrastructure/cert-manager.yaml
+#
+# Two issuers are provided:
+#   - letsencrypt-staging  : Use this first to test without hitting Let's Encrypt rate limits.
+#                            Certificates are signed but NOT trusted by browsers.
+#   - letsencrypt-prod     : Use this for real production certificates (rate-limited).
+#
+# Switch the ingress annotation between the two:
+#   cert-manager.io/cluster-issuer: "letsencrypt-staging"   ← testing
+#   cert-manager.io/cluster-issuer: "letsencrypt-prod"      ← production
+# ─────────────────────────────────────────────────────────
+
+# Staging issuer — safe for testing (no rate limits, untrusted CA)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    # Replace with your real email — Let's Encrypt sends expiry warnings here
+    email: your-email@example.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
+
+---
+# Production issuer — real trusted certificates
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Replace with your real email — Let's Encrypt sends expiry warnings here
+    email: your-email@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
