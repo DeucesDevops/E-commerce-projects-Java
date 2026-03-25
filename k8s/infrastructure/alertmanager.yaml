@@ -1,0 +1,218 @@
+# ─────────────────────────────────────────────────────────
+# Alertmanager — routes Prometheus alerts to Slack / email
+#
+# Flow:
+#   Prometheus evaluates alert rules (defined below in prometheus-rules ConfigMap)
+#   → fires alert to Alertmanager
+#   → Alertmanager deduplicates, groups, and routes to receiver
+#   → you get notified in Slack or email
+#
+# SETUP: Replace the placeholder Slack webhook URL with a real one:
+#   Slack → Your workspace → Apps → Incoming Webhooks → Add to Slack
+#   Copy the webhook URL and set it as a K8s Secret (see below)
+# ─────────────────────────────────────────────────────────
+
+# Secret: holds the Slack webhook URL out of plain YAML
+# Create with: kubectl create secret generic alertmanager-secrets \
+#   --from-literal=slack-webhook-url='https://hooks.slack.com/services/YOUR/WEBHOOK/URL' \
+#   -n shoeapp
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-secrets
+  namespace: shoeapp
+type: Opaque
+stringData:
+  slack-webhook-url: "https://hooks.slack.com/services/REPLACE_ME"
+
+---
+# ConfigMap: Alertmanager routing config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: shoeapp
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+
+    # Group alerts together so you don't get spammed with 10 individual
+    # messages when a single deployment goes down
+    route:
+      receiver: slack-notifications
+      group_by: [alertname, service]
+      group_wait: 30s       # wait 30s before sending the first alert in a group
+      group_interval: 5m    # wait 5m before sending new alerts for the same group
+      repeat_interval: 4h   # re-notify every 4h if the alert is still firing
+
+    receivers:
+      - name: slack-notifications
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/slack-webhook-url
+            channel: '#shoeapp-alerts'
+            send_resolved: true
+            title: '{{ if eq .Status "firing" }}🔴{{ else }}✅{{ end }} {{ .CommonAnnotations.summary }}'
+            text: |
+              {{ range .Alerts }}
+              *Service:* {{ .Labels.service }}
+              *Alert:* {{ .Labels.alertname }}
+              *Severity:* {{ .Labels.severity }}
+              *Description:* {{ .Annotations.description }}
+              {{ end }}
+
+---
+# ConfigMap: Prometheus alerting rules
+# Prometheus evaluates these rules every 15s and fires alerts to Alertmanager
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: shoeapp
+data:
+  shoeapp-rules.yml: |
+    groups:
+      - name: shoeapp.availability
+        interval: 15s
+        rules:
+
+          # Pod has been down for more than 2 minutes
+          - alert: ServiceDown
+            expr: up{job="spring-boot-services"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Service {{ $labels.instance }} is down"
+              description: "{{ $labels.instance }} has been unreachable for more than 2 minutes."
+
+          # Pod is restarting frequently — indicates a crash loop
+          - alert: HighRestartRate
+            expr: rate(kube_pod_container_status_restarts_total{namespace="shoeapp"}[15m]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.pod }} is restarting frequently"
+              description: "{{ $labels.pod }} has restarted more than once in the last 15 minutes."
+
+      - name: shoeapp.performance
+        interval: 30s
+        rules:
+
+          # API Gateway is seeing a high rate of 5xx errors
+          - alert: HighErrorRate
+            expr: |
+              rate(http_server_requests_seconds_count{status=~"5..",job="spring-boot-services"}[5m])
+              /
+              rate(http_server_requests_seconds_count{job="spring-boot-services"}[5m])
+              > 0.05
+            for: 3m
+            labels:
+              severity: critical
+            annotations:
+              summary: "High error rate on {{ $labels.instance }}"
+              description: "More than 5% of requests to {{ $labels.instance }} are returning 5xx errors."
+
+          # API response time is above 2 seconds (p95)
+          - alert: HighResponseTime
+            expr: |
+              histogram_quantile(0.95,
+                rate(http_server_requests_seconds_bucket{job="spring-boot-services"}[5m])
+              ) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Slow responses on {{ $labels.instance }}"
+              description: "95th percentile response time on {{ $labels.instance }} is above 2 seconds."
+
+      - name: shoeapp.resources
+        interval: 30s
+        rules:
+
+          # JVM heap is above 85% — GC pressure building
+          - alert: HighJvmHeapUsage
+            expr: |
+              jvm_memory_used_bytes{area="heap"}
+              /
+              jvm_memory_max_bytes{area="heap"}
+              > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High JVM heap usage on {{ $labels.instance }}"
+              description: "JVM heap on {{ $labels.instance }} is above 85%. Consider increasing memory limits."
+
+          # Kubernetes node CPU above 80%
+          - alert: NodeHighCpu
+            expr: |
+              100 - (avg by(node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU on node {{ $labels.node }}"
+              description: "Node {{ $labels.node }} CPU usage is above 80% for 10 minutes."
+
+---
+# Alertmanager Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: shoeapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+            - "--web.external-url=http://alertmanager.shoeapp.local"
+          ports:
+            - containerPort: 9093
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: secrets
+              mountPath: /etc/alertmanager/secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: secrets
+          secret:
+            secretName: alertmanager-secrets
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: shoeapp
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093
+  type: ClusterIP

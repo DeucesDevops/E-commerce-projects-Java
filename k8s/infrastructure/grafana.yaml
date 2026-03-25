@@ -1,17 +1,18 @@
 # ─────────────────────────────────────────────────────────
 # Grafana — visualizes metrics from Prometheus
 #
-# After deploying, access Grafana at http://localhost:3000
-# Default login: admin / admin (change immediately!)
+# All datasources AND dashboards are pre-provisioned via ConfigMaps.
+# No manual clicking required — everything is ready on first boot.
 #
-# To add a dashboard:
-#   1. Left sidebar → Dashboards → Import
-#   2. Enter ID 4701 (JVM Micrometer dashboard) → Load
-#   3. Select your Prometheus data source → Import
+# Access: kubectl port-forward svc/grafana -n shoeapp 3000:3000
+# Login:  admin / admin
+#
+# Dashboards included:
+#   - Shoeapp Services Overview (HTTP rates, error rates, latency per service)
+#   - JVM Overview              (heap, GC, threads per service)
 # ─────────────────────────────────────────────────────────
 
-# ConfigMap: tells Grafana where Prometheus is
-# This is auto-provisioned — no manual setup needed
+# ConfigMap: datasource — points Grafana at Prometheus
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -23,9 +24,182 @@ data:
     datasources:
       - name: Prometheus
         type: prometheus
-        url: http://prometheus:9090   # uses the K8s service name
+        url: http://prometheus:9090
         access: proxy
         isDefault: true
+
+---
+# ConfigMap: dashboard provisioner — tells Grafana to load dashboards from a folder
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: shoeapp
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: shoeapp-dashboards
+        type: file
+        disableDeletion: true
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+
+---
+# ConfigMap: Shoeapp Services Overview dashboard
+# Shows HTTP request rate, error rate, and p95 latency for every service
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-services
+  namespace: shoeapp
+data:
+  services-overview.json: |
+    {
+      "title": "Shoeapp — Services Overview",
+      "uid": "shoeapp-services",
+      "tags": ["shoeapp"],
+      "timezone": "browser",
+      "schemaVersion": 36,
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "title": "HTTP Request Rate (req/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "sum by (instance) (rate(http_server_requests_seconds_count{job='spring-boot-services'}[5m]))",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "HTTP Error Rate (%)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "sum by (instance) (rate(http_server_requests_seconds_count{status=~'5..',job='spring-boot-services'}[5m])) / sum by (instance) (rate(http_server_requests_seconds_count{job='spring-boot-services'}[5m])) * 100",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "p95 Response Time (s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (instance, le) (rate(http_server_requests_seconds_bucket{job='spring-boot-services'}[5m])))",
+              "legendFormat": "p95 {{instance}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Services Up / Down",
+          "type": "stat",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "up{job='spring-boot-services'}",
+              "legendFormat": "{{instance}}"
+            }
+          ],
+          "options": {
+            "colorMode": "background",
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        }
+      ]
+    }
+
+---
+# ConfigMap: JVM Overview dashboard
+# Shows heap memory, GC pause time, and active threads per service
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-jvm
+  namespace: shoeapp
+data:
+  jvm-overview.json: |
+    {
+      "title": "Shoeapp — JVM Overview",
+      "uid": "shoeapp-jvm",
+      "tags": ["shoeapp", "jvm"],
+      "timezone": "browser",
+      "schemaVersion": 36,
+      "refresh": "30s",
+      "panels": [
+        {
+          "id": 1,
+          "title": "JVM Heap Used (bytes)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "jvm_memory_used_bytes{area='heap', job='spring-boot-services'}",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "JVM Heap Usage (%)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "jvm_memory_used_bytes{area='heap', job='spring-boot-services'} / jvm_memory_max_bytes{area='heap', job='spring-boot-services'} * 100",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "GC Pause Time (s/s)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "rate(jvm_gc_pause_seconds_sum{job='spring-boot-services'}[5m])",
+              "legendFormat": "{{instance}} — {{cause}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Live Threads",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "jvm_threads_live_threads{job='spring-boot-services'}",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        }
+      ]
+    }
 
 ---
 apiVersion: apps/v1
@@ -50,10 +224,18 @@ spec:
             - containerPort: 3000
           env:
             - name: GF_SECURITY_ADMIN_PASSWORD
-              value: "admin"   # Change this in production!
+              value: "admin"
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboard-services
+              mountPath: /var/lib/grafana/dashboards/services-overview.json
+              subPath: services-overview.json
+            - name: dashboard-jvm
+              mountPath: /var/lib/grafana/dashboards/jvm-overview.json
+              subPath: jvm-overview.json
           resources:
             requests:
               cpu: "100m"
@@ -65,6 +247,15 @@ spec:
         - name: datasources
           configMap:
             name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboard-services
+          configMap:
+            name: grafana-dashboard-services
+        - name: dashboard-jvm
+          configMap:
+            name: grafana-dashboard-jvm
 
 ---
 apiVersion: v1
