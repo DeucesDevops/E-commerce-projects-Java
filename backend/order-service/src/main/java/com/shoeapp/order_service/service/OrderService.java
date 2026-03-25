@@ -46,6 +46,10 @@ public class OrderService {
         return orderRepository.findByUserIdOrderByCreatedAtDesc(userId);
     }
 
+    public List<Order> getAllOrders() {
+        return orderRepository.findAll();
+    }
+
     public Order updateOrderStatus(Long orderId, String status) {
         Order order = getOrderById(orderId);
         order.setStatus(status);

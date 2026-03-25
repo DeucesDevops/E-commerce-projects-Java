@@ -30,6 +30,22 @@ public class OrderController {
         return ResponseEntity.ok(order);
     }
 
+    // Bug fix: frontend calls GET /api/orders (no path param) for the current user's orders.
+    // The API Gateway injects X-User-Id from the validated JWT so we never trust a userId from the client.
+    @GetMapping
+    public ResponseEntity<List<Order>> getMyOrders(
+            @RequestHeader("X-User-Id") Long userId) {
+        List<Order> orders = orderService.getOrdersByUserId(userId);
+        return ResponseEntity.ok(orders);
+    }
+
+    // Bug fix: admin dashboard calls GET /api/orders/all
+    @GetMapping("/all")
+    public ResponseEntity<List<Order>> getAllOrders() {
+        List<Order> orders = orderService.getAllOrders();
+        return ResponseEntity.ok(orders);
+    }
+
     @GetMapping("/user/{userId}")
     public ResponseEntity<List<Order>> getOrdersByUserId(@PathVariable Long userId) {
         List<Order> orders = orderService.getOrdersByUserId(userId);
