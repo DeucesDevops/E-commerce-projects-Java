@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: yourname/frontend:latest
+          image: ghcr.io/deucesdevops/frontend:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 80

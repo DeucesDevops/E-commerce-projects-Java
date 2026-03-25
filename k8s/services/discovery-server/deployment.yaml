@@ -18,7 +18,7 @@ spec:
       containers:
         - name: discovery-server
           # Replace "yourname" with your Docker Hub username
-          image: yourname/discovery-server:latest
+          image: ghcr.io/deucesdevops/discovery-server:latest
           imagePullPolicy: Always   # always pull the latest image on pod start
           ports:
             - containerPort: 8761

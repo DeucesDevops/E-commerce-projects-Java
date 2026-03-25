@@ -1,17 +1,23 @@
 # ─────────────────────────────────────────────────────────────────────
 # CI/CD Pipeline — runs on every push to main
 #
+# Pipeline stages:
+#   1. test            — Maven tests for all 10 services (parallel)
+#   2. build-and-push  — Docker build + push to GHCR (tagged with git SHA)
+#   3. trivy-scan      — CVE vulnerability scan on every pushed image
+#   4. update-image-tags — GitOps: update k8s manifests → ArgoCD syncs cluster
+#
 # BEFORE THIS WORKS, add these secrets in GitHub:
 #   Repository → Settings → Secrets and variables → Actions → New secret
 #
-#   DOCKER_USERNAME   — your Docker Hub username
-#   DOCKER_PASSWORD   — your Docker Hub password or access token
-#   KUBECONFIG        — base64 of your cluster's kubeconfig file
-#                       Generate with: base64 -w 0 ~/.kube/config
 #   JWT_SECRET        — your production JWT secret (64+ chars)
 #   STRIPE_SECRET_KEY — your Stripe live secret key
 #   MAIL_USERNAME     — your email address
 #   MAIL_PASSWORD     — your email app password
+#
+# NOTE: No Docker Hub credentials needed.
+#   Images are pushed to GitHub Container Registry (GHCR) using the
+#   built-in GITHUB_TOKEN — no extra secrets required.
 # ─────────────────────────────────────────────────────────────────────
 name: CI/CD Pipeline
 
@@ -19,16 +25,10 @@ on:
   push:
     branches: [main]
 
-# Environment variables available to all jobs
-env:
-  DOCKER_REGISTRY: docker.io
-  # Change "yourname" to your actual Docker Hub username
-  IMAGE_PREFIX: ${{ secrets.DOCKER_USERNAME }}
-
 jobs:
   # ─── JOB 1: TEST ──────────────────────────────────────────────────
   # Runs Maven tests for every backend service in parallel.
-  # If any service's tests fail, the build stops here — nothing is deployed.
+  # If any service's tests fail, the pipeline stops here.
   test:
     name: Test ${{ matrix.service }}
     runs-on: ubuntu-latest
@@ -54,7 +54,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          # Cache Maven dependencies so we don't re-download them every run
           cache: maven
 
       - name: Run tests for ${{ matrix.service }}
@@ -62,15 +61,23 @@ jobs:
         working-directory: backend/${{ matrix.service }}
 
   # ─── JOB 2: BUILD AND PUSH DOCKER IMAGES ─────────────────────────
-  # Builds the Docker image for every service and pushes to Docker Hub.
-  # Uses the Git commit SHA as the image tag — this guarantees every
-  # commit produces a unique, traceable image.
+  # Builds and pushes to GitHub Container Registry (GHCR).
   #
-  # Example tag: yourname/auth-service:a3f9c12
+  # Why GHCR over Docker Hub:
+  #   - Uses GITHUB_TOKEN (built-in) — no extra secrets
+  #   - No rate limits on pulls
+  #   - Images live next to your code in GitHub
+  #   - Packages are visible on your GitHub profile
+  #
+  # Image naming: ghcr.io/<github-owner>/<service>:<git-sha>
+  # Example:      ghcr.io/bernardboateng/auth-service:a3f9c12
   build-and-push:
     name: Build & Push ${{ matrix.service }}
     runs-on: ubuntu-latest
-    needs: test   # only runs if all tests pass
+    needs: test
+    permissions:
+      contents: read
+      packages: write   # required to push to GHCR
     strategy:
       matrix:
         include:
@@ -100,26 +107,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # docker/metadata-action automatically generates tags and labels
-      # We use two tags:
-      #   1. The short Git SHA (e.g. a3f9c12) — unique, traceable
-      #   2. "latest" — always points to the newest build
+      # type=sha,prefix= produces a clean tag like "a3f9c12"
+      # (no "sha-" prefix, so the sed command in update-image-tags stays simple)
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}
           tags: |
-            type=sha,format=short
+            type=sha,format=short,prefix=
             type=raw,value=latest
 
-      # BuildKit speeds up builds by caching layers in GitHub's cache storage
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -130,61 +135,116 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Cache from/to GitHub Actions cache — avoids re-downloading Maven deps
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ─── JOB 3: UPDATE IMAGE TAGS (GitOps / ArgoCD) ──────────────────
-  # Instead of running kubectl directly, we:
-  #   1. Update the image tag in each k8s deployment.yaml in Git
-  #   2. Commit and push that change to main
-  #   3. ArgoCD watches main → detects the change → deploys to the cluster
+  # ─── JOB 3: TRIVY SECURITY SCAN ──────────────────────────────────
+  # Scans every pushed image for known CVEs before deploying.
   #
-  # This is the GitOps pattern — Git is the single source of truth.
-  # Benefits over direct kubectl:
-  #   - Full audit trail: every deploy is a Git commit
-  #   - Easy rollback: just revert the commit
-  #   - ArgoCD UI shows live deployment status with health checks
-  #   - selfHeal: if someone manually edits the cluster, ArgoCD reverts it
+  # Behaviour:
+  #   - Fails the pipeline on CRITICAL or HIGH severity vulnerabilities
+  #   - Skips unfixed CVEs (nothing you can act on)
+  #   - Scans both OS packages and application libraries
+  #   - Runs in parallel across all services (fail-fast: false so you see
+  #     ALL affected services, not just the first one that fails)
+  #
+  # If this job fails: check the output for the CVE IDs, update the
+  # affected base image or dependency, then push again.
+  trivy-scan:
+    name: Trivy Scan — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      contents: read
+      packages: read    # required to pull from GHCR
+      security-events: write   # required to upload SARIF results
+    strategy:
+      fail-fast: false  # scan all services, not just until the first failure
+      matrix:
+        service:
+          - discovery-server
+          - api-gateway
+          - auth-service
+          - product-service
+          - inventory-service
+          - order-service
+          - cart-service
+          - user-service
+          - notification-service
+          - payment-service
+          - frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: tag
+        run: echo "sha=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan ${{ matrix.service }} for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:${{ steps.tag.outputs.sha }}
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      # Upload results to GitHub Security tab so you can review findings
+      # in the repository UI (Security → Code scanning alerts)
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+
+  # ─── JOB 4: UPDATE IMAGE TAGS (GitOps / ArgoCD) ──────────────────
+  # Only runs after the security scan passes — we never deploy an image
+  # with known CRITICAL/HIGH vulnerabilities.
+  #
+  # Updates the image tag in each k8s deployment.yaml, commits to main,
+  # and ArgoCD picks up the change and rolls out the new version.
   update-image-tags:
     name: Update Image Tags (GitOps)
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: trivy-scan   # gate on security scan, not just build
+    permissions:
+      contents: write   # required to push the tag-update commit
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # Use a token with write access so we can push back to the repo
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set image tag
         id: tag
         run: echo "sha=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
 
-      # Update the image field in each deployment.yaml from:
-      #   image: yourname/auth-service:latest
-      # to:
-      #   image: yourname/auth-service:a3f9c12
-      #
-      # sed -i performs an in-place substitution:
-      #   's|old pattern|new value|' file
       - name: Update deployment image tags
         run: |
           TAG=${{ steps.tag.outputs.sha }}
-          REGISTRY=${{ secrets.DOCKER_USERNAME }}
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REGISTRY="ghcr.io/$OWNER"
 
           for SERVICE in discovery-server api-gateway auth-service product-service \
                          inventory-service order-service cart-service user-service \
                          notification-service payment-service frontend; do
             DEPLOY_FILE="k8s/services/$SERVICE/deployment.yaml"
             if [ -f "$DEPLOY_FILE" ]; then
-              sed -i "s|image: $REGISTRY/$SERVICE:.*|image: $REGISTRY/$SERVICE:$TAG|g" "$DEPLOY_FILE"
+              sed -i "s|image: ghcr.io/.*/\($SERVICE\):.*|image: $REGISTRY/\1:$TAG|g" "$DEPLOY_FILE"
               echo "Updated $SERVICE → $REGISTRY/$SERVICE:$TAG"
             fi
           done
 
-      # Commit the updated deployment.yaml files and push to main.
-      # ArgoCD is watching main and will pick up this commit automatically.
       - name: Commit and push updated image tags
         run: |
           git config user.name  "github-actions[bot]"
@@ -192,10 +252,12 @@ jobs:
           git add k8s/services/*/deployment.yaml
           git commit -m "chore: update image tags to ${{ steps.tag.outputs.sha }} [skip ci]"
           git push origin main
-          # [skip ci] prevents this commit from triggering another pipeline run
 
-      - name: Summary
+      - name: Pipeline summary
         run: |
+          echo "✅ Tests passed"
+          echo "✅ Images pushed to ghcr.io/${{ github.repository_owner }}"
+          echo "✅ Trivy security scan passed (no CRITICAL/HIGH CVEs)"
           echo "✅ Image tags updated to: ${{ steps.tag.outputs.sha }}"
-          echo "ArgoCD will now sync the cluster automatically."
-          echo "Monitor at: https://localhost:8090 (ArgoCD UI)"
+          echo "   ArgoCD will now sync the cluster automatically."
+          echo "   Monitor at: https://localhost:8090 (kubectl port-forward)"

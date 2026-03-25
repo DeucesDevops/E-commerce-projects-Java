@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: yourname/api-gateway:latest
+          image: ghcr.io/deucesdevops/api-gateway:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080

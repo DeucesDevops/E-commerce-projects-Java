@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: order-service
-          image: yourname/order-service:latest
+          image: ghcr.io/deucesdevops/order-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8082

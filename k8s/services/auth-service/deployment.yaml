@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: auth-service
-          image: yourname/auth-service:latest
+          image: ghcr.io/deucesdevops/auth-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8084

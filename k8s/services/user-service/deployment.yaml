@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: user-service
-          image: yourname/user-service:latest
+          image: ghcr.io/deucesdevops/user-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8088

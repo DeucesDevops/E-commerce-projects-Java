@@ -32,8 +32,7 @@ spec:
 
   # SOURCE: where ArgoCD watches for changes
   source:
-    # Change this to your actual GitHub repo URL
-    repoURL: https://github.com/YOUR_USERNAME/E-commerce-projects-Java.git
+    repoURL: https://github.com/DeucesDevops/E-commerce-projects-Java.git
     targetRevision: main   # watch the main branch
     path: k8s              # only watch the k8s/ directory
 

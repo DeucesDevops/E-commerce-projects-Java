@@ -52,7 +52,7 @@ jobs:
         working-directory: backend/${{ matrix.service }}
 
   frontend-check:
-    name: Frontend Build Check
+    name: Frontend Lint & Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -67,6 +67,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        working-directory: frontend
+
+      - name: ESLint — catch errors before they reach main
+        run: npm run lint
+        working-directory: frontend
+
+      - name: TypeScript — type-check without emitting files
+        run: npx tsc --noEmit
         working-directory: frontend
 
       - name: Build frontend

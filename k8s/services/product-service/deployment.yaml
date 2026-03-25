@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: product-service
-          image: yourname/product-service:latest
+          image: ghcr.io/deucesdevops/product-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8081

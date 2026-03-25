@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: notification-service
-          image: yourname/notification-service:latest
+          image: ghcr.io/deucesdevops/notification-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8087

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: cart-service
-          image: yourname/cart-service:latest
+          image: ghcr.io/deucesdevops/cart-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8085
